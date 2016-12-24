@@ -59,7 +59,7 @@ struct table {
 
     table(unsigned partitions, unsigned rows)
         : mt(make_lw_shared<memtable>(s.schema()))
-        , underlying(s.schema())
+        , underlying(s.schema(), scheduling_group())
         , cache(s.schema(), snapshot_source([this] { return underlying(); }), global_cache_tracker())
     {
         p_keys = s.make_pkeys(partitions);
@@ -99,7 +99,7 @@ struct table {
         test_log.trace("updating cache");
         cache.update(*prev_mt, [] (const dht::decorated_key& dk) {
             return partition_presence_checker_result::maybe_exists;
-        }).get();
+        }, scheduling_group()).get();
         test_log.trace("flush done");
         prev_mt = {};
     }

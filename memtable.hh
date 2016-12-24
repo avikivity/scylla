@@ -140,7 +140,7 @@ public:
     ~memtable();
     // Clears this memtable gradually without consuming the whole CPU.
     // Never resolves with a failed future.
-    future<> clear_gently() noexcept;
+    future<> clear_gently(seastar::scheduling_group sg = {}) noexcept;
     schema_ptr schema() const { return _schema; }
     void set_schema(schema_ptr) noexcept;
     future<> apply(memtable&);
@@ -181,12 +181,13 @@ public:
                                 const dht::partition_range& range = query::full_partition_range,
                                 const query::partition_slice& slice = query::full_slice,
                                 const io_priority_class& pc = default_priority_class(),
+                                scheduling_group sg = {},
                                 tracing::trace_state_ptr trace_state_ptr = nullptr,
                                 streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
                                 mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes);
 
 
-    mutation_reader make_flush_reader(schema_ptr, const io_priority_class& pc);
+    mutation_reader make_flush_reader(schema_ptr, const io_priority_class& pc, scheduling_group sg);
 
     mutation_source as_data_source();
 

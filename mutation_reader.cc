@@ -83,7 +83,7 @@ future<> combined_mutation_reader::prepare_next() {
     maybe_add_readers(current_position());
 
     return parallel_for_each(_next, [this] (mutation_reader* mr) {
-        return (*mr)().then([this, mr] (streamed_mutation_opt next) {
+        return (*mr)().then(_sg, [this, mr] (streamed_mutation_opt next) {
             if (next) {
                 _ptables.emplace_back(mutation_and_reader { std::move(*next), mr });
                 boost::range::push_heap(_ptables, &heap_compare);
@@ -91,12 +91,13 @@ future<> combined_mutation_reader::prepare_next() {
                 _all_readers.remove_if([mr] (auto& r) { return &r == mr; });
             }
         });
-    }).then([this] {
+    }).then(_sg, [this] {
         _next.clear();
     });
 }
 
 future<streamed_mutation_opt> combined_mutation_reader::next() {
+  return run_with_scheduling_group(_sg, [this] {
     if ((_current.empty() && !_next.empty()) || _selector->has_new_readers(current_position())) {
         return prepare_next().then([this] { return next(); });
     }
@@ -112,7 +113,6 @@ future<streamed_mutation_opt> combined_mutation_reader::next() {
         _current.emplace_back(std::move(m));
         _next.emplace_back(candidate.read);
         _ptables.pop_back();
-
         if (_ptables.empty() || !_current.back().decorated_key().equal(*_current.back().schema(), _ptables.front().m.decorated_key())) {
             // key has changed, so emit accumulated mutation
             break;
@@ -124,10 +124,12 @@ future<streamed_mutation_opt> combined_mutation_reader::next() {
         return make_ready_future<streamed_mutation_opt>(std::move(m));
     }
     return make_ready_future<streamed_mutation_opt>(merge_mutations(std::exchange(_current, {})));
+  });
 }
 
-combined_mutation_reader::combined_mutation_reader(std::unique_ptr<reader_selector> selector, mutation_reader::forwarding fwd_mr)
+combined_mutation_reader::combined_mutation_reader(std::unique_ptr<reader_selector> selector, mutation_reader::forwarding fwd_mr, scheduling_group sg)
     : _selector(std::move(selector))
+    , _sg(sg)
     , _fwd_mr(fwd_mr)
 {
 }
@@ -149,8 +151,8 @@ future<streamed_mutation_opt> combined_mutation_reader::operator()() {
 }
 
 mutation_reader
-make_combined_reader(std::vector<mutation_reader> readers, mutation_reader::forwarding fwd_mr) {
-    return make_mutation_reader<combined_mutation_reader>(std::make_unique<list_reader_selector>(std::move(readers)), fwd_mr);
+make_combined_reader(std::vector<mutation_reader> readers, mutation_reader::forwarding fwd_mr, scheduling_group sg) {
+    return make_mutation_reader<combined_mutation_reader>(std::make_unique<list_reader_selector>(std::move(readers)), fwd_mr, sg);
 }
 
 mutation_reader
@@ -305,12 +307,12 @@ private:
     mutation_reader _reader;
 public:
     multi_range_mutation_reader(schema_ptr s, mutation_source source, const ranges_vector& ranges,
-                                const query::partition_slice& slice, const io_priority_class& pc,
+                                const query::partition_slice& slice, const io_priority_class& pc, scheduling_group sg,
                                 tracing::trace_state_ptr trace_state, streamed_mutation::forwarding fwd,
                                 mutation_reader::forwarding fwd_mr)
         : _ranges(ranges)
         , _current_range(_ranges.begin())
-        , _reader(source(s, *_current_range, slice, pc, trace_state, fwd,
+        , _reader(source(s, *_current_range, slice, pc, sg, trace_state, fwd,
             _ranges.size() > 1 ? mutation_reader::forwarding::yes : fwd_mr))
     {
     }
@@ -342,12 +344,12 @@ public:
 
 mutation_reader
 make_multi_range_reader(schema_ptr s, mutation_source source, const dht::partition_range_vector& ranges,
-                        const query::partition_slice& slice, const io_priority_class& pc,
+                        const query::partition_slice& slice, const io_priority_class& pc, scheduling_group sg,
                         tracing::trace_state_ptr trace_state, streamed_mutation::forwarding fwd,
                         mutation_reader::forwarding fwd_mr)
 {
     return make_mutation_reader<multi_range_mutation_reader>(std::move(s), std::move(source), ranges,
-                                                             slice, pc, std::move(trace_state), fwd, fwd_mr);
+                                                             slice, pc, sg, std::move(trace_state), fwd, fwd_mr);
 }
 
 snapshot_source make_empty_snapshot_source() {
@@ -361,6 +363,7 @@ mutation_source make_empty_mutation_source() {
             const dht::partition_range& pr,
             const query::partition_slice& slice,
             const io_priority_class& pc,
+            scheduling_group sg,
             tracing::trace_state_ptr tr,
             streamed_mutation::forwarding fwd) {
         return make_empty_reader();
@@ -372,13 +375,14 @@ mutation_source make_combined_mutation_source(std::vector<mutation_source> adden
             const dht::partition_range& pr,
             const query::partition_slice& slice,
             const io_priority_class& pc,
+            scheduling_group sg,
             tracing::trace_state_ptr tr,
             streamed_mutation::forwarding fwd) {
         std::vector<mutation_reader> rd;
         rd.reserve(addends.size());
         for (auto&& ms : addends) {
-            rd.emplace_back(ms(s, pr, slice, pc, tr, fwd));
+            rd.emplace_back(ms(s, pr, slice, pc, sg, tr, fwd));
         }
-        return make_combined_reader(std::move(rd), mutation_reader::forwarding::yes);
+        return make_combined_reader(std::move(rd), mutation_reader::forwarding::yes, sg);
     });
 }

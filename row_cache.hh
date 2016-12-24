@@ -403,7 +403,7 @@ private:
     // It is invoked inside allocating section and in the context of cache's allocator.
     // All memtable entries will be removed.
     template <typename Updater>
-    future<> do_update(memtable& m, Updater func);
+    future<> do_update(memtable& m, scheduling_group sg, Updater func);
 public:
     ~row_cache();
     row_cache(schema_ptr, snapshot_source, cache_tracker&);
@@ -419,6 +419,7 @@ public:
                                 const dht::partition_range& = query::full_partition_range,
                                 const query::partition_slice& slice = query::full_slice,
                                 const io_priority_class& = default_priority_class(),
+                                scheduling_group sg = {},
                                 tracing::trace_state_ptr trace_state = nullptr,
                                 streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
                                 mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::no);
@@ -434,13 +435,13 @@ public:
     // has just been flushed to the underlying data source.
     // The memtable can be queried during the process, but must not be written.
     // After the update is complete, memtable is empty.
-    future<> update(memtable&, partition_presence_checker underlying_negative);
+    future<> update(memtable&, partition_presence_checker underlying_negative, scheduling_group sg = {});
 
     // Like update(), synchronizes cache with an incremental change to the underlying
     // mutation source, but instead of inserting and merging data, invalidates affected ranges.
     // Can be thought of as a more fine-grained version of invalidate(), which invalidates
     // as few elements as possible.
-    future<> update_invalidating(memtable&);
+    future<> update_invalidating(memtable&, scheduling_group sg = {});
 
     // Refreshes snapshot. Must only be used if logical state in the underlying data
     // source hasn't changed.

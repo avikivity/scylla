@@ -25,6 +25,8 @@
 #include "core/iostream.hh"
 #include "sstables/exceptions.hh"
 #include <seastar/core/byteorder.hh>
+#include <seastar/core/temporary_buffer.hh>
+#include "stdx.hh"
 
 template<typename T>
 static inline T consume_be(temporary_buffer<char>& p) {
@@ -222,8 +224,8 @@ public:
             : _input(std::move(input)), _stream_position(start), _remain(maxlen) {}
 
     template<typename Consumer>
-    future<> consume_input(Consumer& c) {
-        return _input.consume(c);
+    future<> consume_input(Consumer&& c) {
+        return _input.consume(std::forward<Consumer>(c));
     }
 
     // some states do not consume input (its only exists to perform some
